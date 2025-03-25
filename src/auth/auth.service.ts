@@ -4,6 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthDto } from './dto/auth.dto';
 import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
+import { Response } from 'express';
 @Injectable()
 export class AuthService {
   constructor(
@@ -12,7 +13,7 @@ export class AuthService {
     private config: ConfigService,
   ) {}
 
-  async signup(dto: AuthDto) {
+  async signup(dto: AuthDto, res : Response) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -29,12 +30,16 @@ export class AuthService {
       },
     });
     const tokens = await this.generateTokens(user.id, user.email);
-
-    return {
+    await res.cookie('refreshToken', tokens.refreshToken, {
+      httpOnly: true,
+      secure : true,
+      sameSite : 'none',
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    });
+    return res.status(201).json({
       message: 'User registered successfully',
       accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    };
+    });
   }
 
   async login(dto: AuthDto) {
