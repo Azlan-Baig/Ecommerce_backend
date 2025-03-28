@@ -47,6 +47,9 @@ export class AuthService {
         accessToken: tokens.accessToken,
       });
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error; 
+      }
       throw new HttpException(
         'Something went wrong',
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -79,6 +82,9 @@ export class AuthService {
         accessToken: tokens.accessToken,
       });
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error; 
+      }
       throw new HttpException(
         'Something went wrong',
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -124,5 +130,73 @@ export class AuthService {
       where: { id: userId },
       data: { refreshToken: hashedToken },
     });
+  }
+  async refresh(req: Request, res: Response) {
+    try {
+  
+      const refreshToken = req.cookies['refreshToken'];
+      
+      if (!refreshToken) {
+        console.error('CRITICAL: No refresh token found in cookies');
+        throw new UnauthorizedException('No refresh token provided');
+      }
+  
+      let payload;
+      try {
+        payload = this.jwtService.verify(refreshToken, {
+          secret: this.config.get<string>('REFRESH_SECRET')
+        });
+      } catch (verifyError) {
+        console.error('Token Verification Failed:', verifyError);
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+  
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { 
+          id: true, 
+          email: true, 
+          refreshToken: true 
+        }
+      });
+  
+      if (!user) {
+        console.error('No user found with ID:', payload.sub);
+        throw new UnauthorizedException('User not found');
+      }
+  
+      // If you're unsure about the comparison, add more logging
+      const isRefreshTokenValid = await bcrypt.compare(
+        refreshToken, 
+        user.refreshToken || ''
+      );
+  
+      if (!isRefreshTokenValid) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+  
+      const tokens = await this.generateTokens(user.id, user.email);
+  
+      // More flexible cookie settings for testing
+      res.cookie('refreshToken', tokens.refreshToken, {
+        httpOnly: true,
+        secure: false, // Set to false for local testing
+        sameSite: 'lax',
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+      });
+  
+      return res.status(200).json({
+        message: 'Token refreshed successfully',
+        accessToken: tokens.accessToken
+      });
+  
+    } catch (error) {
+      console.error('Comprehensive Refresh Error:', error);
+      
+      throw new HttpException(
+        error.message || 'Token refresh failed', 
+        error.status || HttpStatus.UNAUTHORIZED
+      );
+    }
   }
 }
