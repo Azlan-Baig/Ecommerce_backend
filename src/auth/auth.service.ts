@@ -93,7 +93,33 @@ export class AuthService {
   }
   async logout(req: Request, res: Response) {
     try {
-      await res.clearCookie('refreshToken', {
+      const refreshToken = req.cookies.refreshToken;
+      console.log('Refresh Token:', refreshToken); 
+      
+      if (!refreshToken) {
+        res.clearCookie('refreshToken', {
+          httpOnly: true,
+          secure: true,
+          sameSite: 'none',
+        });
+        return res.status(200).json({ message: 'User logged out successfully' });
+      }
+
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: this.config.get<string>('REFRESH_SECRET'),
+      });
+        console.log('Payload:', payload);
+        
+      if (!payload) {
+        throw new HttpException('Invalid refresh token', HttpStatus.UNAUTHORIZED);
+      }
+
+      await this.prisma.user.update({
+        where: { id: payload.sub },
+        data: { refreshToken: null },
+      });
+
+      res.clearCookie('refreshToken', {
         httpOnly: true,
         secure: true,
         sameSite: 'none',
@@ -101,12 +127,26 @@ export class AuthService {
 
       return res.status(200).json({ message: 'User logged out successfully' });
     } catch (error) {
-      throw new HttpException(
-        'Something went wrong',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      // Clear cookie even if there's an error
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+      });
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      // Handle JWT verification errors (expired, malformed, etc.)
+      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+        return res.status(200).json({ message: 'User logged out successfully' });
+      }
+
+      throw new HttpException('Logout failed', HttpStatus.INTERNAL_SERVER_ERROR);
     }
-  }
+}
+  
 
   async generateTokens(userId: string, email: string) {
     const payload = { sub: userId, email };
